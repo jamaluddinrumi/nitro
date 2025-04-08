@@ -1,11 +1,8 @@
 import { promises as fsp } from "node:fs";
-import { extname } from "pathe";
 import mime from "mime";
+import type { RawOptions } from "nitropack/types";
+import { extname } from "pathe";
 import type { Plugin } from "rollup";
-
-export interface RawOptions {
-  extensions?: string[];
-}
 
 const HELPER_ID = "\0raw-helpers";
 
@@ -17,12 +14,13 @@ export function raw(opts: RawOptions = {}): Plugin {
     ".css",
     ".htm",
     ".html",
+    ".sql",
     ...(opts.extensions || []),
   ]);
 
   return {
     name: "raw",
-    async resolveId(id, importer) {
+    async resolveId(id, importer, resolveOpts) {
       if (id === HELPER_ID) {
         return id;
       }
@@ -31,22 +29,23 @@ export function raw(opts: RawOptions = {}): Plugin {
         return;
       }
 
-      let isRawId = id.startsWith("raw:");
-      if (isRawId) {
+      const withRawSpecifier = id.startsWith("raw:");
+      if (withRawSpecifier) {
         id = id.slice(4);
-      } else if (extensions.has(extname(id))) {
-        isRawId = true;
       }
 
-      if (!isRawId) {
+      if (!withRawSpecifier && !extensions.has(extname(id))) {
         return;
       }
 
-      const resolvedId = (await this.resolve(id, importer, { skipSelf: true }))
-        ?.id;
+      const resolvedId = (await this.resolve(id, importer, resolveOpts))?.id;
 
       if (!resolvedId || resolvedId.startsWith("\0")) {
         return resolvedId;
+      }
+
+      if (!withRawSpecifier && !extensions.has(extname(resolvedId))) {
+        return;
       }
 
       return { id: "\0raw:" + resolvedId };
@@ -70,12 +69,11 @@ export function raw(opts: RawOptions = {}): Plugin {
           code: `// ROLLUP_NO_REPLACE \n import {base64ToUint8Array } from "${HELPER_ID}" \n export default base64ToUint8Array("${serialized}")`,
           map: null,
         };
-      } else {
-        return {
-          code: `// ROLLUP_NO_REPLACE \n export default ${JSON.stringify(code)}`,
-          map: null,
-        };
       }
+      return {
+        code: `// ROLLUP_NO_REPLACE \n export default ${JSON.stringify(code)}`,
+        map: null,
+      };
     },
   };
 }
@@ -85,7 +83,7 @@ function isBinary(id: string) {
   if (idMime.startsWith("text/")) {
     return false;
   }
-  if (/application\/(json|xml|yaml)/.test(idMime)) {
+  if (/application\/(json|sql|xml|yaml)/.test(idMime)) {
     return false;
   }
   return true;

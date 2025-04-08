@@ -1,6 +1,6 @@
 import { promises as fsp } from "node:fs";
 import { resolve } from "pathe";
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { setupTest, startServer, testNitro } from "../tests";
 
 describe("nitro:preset:vercel", async () => {
@@ -25,6 +25,12 @@ describe("nitro:preset:vercel", async () => {
         expect(config).toMatchInlineSnapshot(`
           {
             "overrides": {
+              "_scalar/index.html": {
+                "path": "_scalar",
+              },
+              "_swagger/index.html": {
+                "path": "_swagger",
+              },
               "api/hey/index.html": {
                 "path": "api/hey",
               },
@@ -35,14 +41,14 @@ describe("nitro:preset:vercel", async () => {
             "routes": [
               {
                 "headers": {
-                  "Location": "https://nitro.unjs.io/",
+                  "Location": "https://nitro.build/",
                 },
                 "src": "/rules/redirect/obj",
                 "status": 308,
               },
               {
                 "headers": {
-                  "Location": "https://nitro.unjs.io/$1",
+                  "Location": "https://nitro.build/$1",
                 },
                 "src": "/rules/redirect/wildcard/(.*)",
                 "status": 307,
@@ -89,6 +95,12 @@ describe("nitro:preset:vercel", async () => {
                   "cache-control": "public, max-age=3600, immutable",
                 },
                 "src": "/build/(.*)",
+              },
+              {
+                "headers": {
+                  "x-test": "test",
+                },
+                "src": "/(.*)",
               },
               {
                 "continue": true,
@@ -144,6 +156,20 @@ describe("nitro:preset:vercel", async () => {
             "version": 3,
           }
         `);
+      });
+
+      it("should generate prerender config", async () => {
+        const isrRouteConfig = await fsp.readFile(
+          resolve(
+            ctx.outDir,
+            "functions/__nitro--rules-isr.prerender-config.json"
+          ),
+          "utf8"
+        );
+        expect(JSON.parse(isrRouteConfig)).toMatchObject({
+          expiration: false,
+          allowQuery: ["q", "url"],
+        });
       });
     }
   );

@@ -1,8 +1,8 @@
 import { promises as fsp } from "node:fs";
-import { join, resolve } from "pathe";
 import { Miniflare } from "miniflare";
-import { describe, it, expect } from "vitest";
+import { resolve } from "pathe";
 import { Response as _Response } from "undici";
+import { describe, expect, it } from "vitest";
 
 import { isWindows } from "std-env";
 import { setupTest, testNitro } from "../tests";
@@ -15,7 +15,11 @@ describe.skipIf(isWindows)("nitro:preset:cloudflare-pages", async () => {
       modules: true,
       scriptPath: resolve(ctx.outDir, "_worker.js", "index.js"),
       modulesRules: [{ type: "CompiledWasm", include: ["**/*.wasm"] }],
-      compatibilityFlags: ["streams_enable_constructors"],
+      compatibilityFlags: [
+        "streams_enable_constructors",
+        "nodejs_compat",
+        "no_nodejs_compat_v2",
+      ],
       sitePath: "",
       bindings: { ...ctx.env },
     });
@@ -39,15 +43,26 @@ describe.skipIf(isWindows)("nitro:preset:cloudflare-pages", async () => {
       {
         "exclude": [
           "/blog/static/*",
+          "/cf-pages-exclude/*",
           "/build/*",
+          "/_openapi.json",
+          "/_openapi.json.br",
+          "/_openapi.json.gz",
+          "/_scalar",
+          "/_swagger",
           "/_unignored.txt",
           "/favicon.ico",
+          "/foo.css",
+          "/foo.js",
           "/json-string",
+          "/prerender",
+          "/prerender-custom",
+          "/_swagger/index.html.br",
+          "/_swagger/index.html.gz",
           "/api/hello",
-          "/prerender/index.html",
+          "/api/hey",
           "/prerender/index.html.br",
           "/prerender/index.html.gz",
-          "/api/hey/index.html",
           "/api/param/foo.json",
           "/api/param/hidden",
           "/api/param/prerender1",

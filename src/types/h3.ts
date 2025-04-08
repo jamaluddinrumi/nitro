@@ -1,12 +1,16 @@
-import type { CaptureError, CapturedErrorContext } from "../runtime/types";
-import type { NitroFetchRequest, $Fetch } from "./fetch";
+import type {
+  CacheOptions,
+  CaptureError,
+  CapturedErrorContext,
+} from "nitropack/types";
+import type { Base$Fetch, NitroFetchRequest } from "./fetch/fetch";
 
 export type H3EventFetch = (
   request: NitroFetchRequest,
   init?: RequestInit
 ) => Promise<Response>;
 
-export type H3Event$Fetch = $Fetch<unknown, NitroFetchRequest>;
+export type H3Event$Fetch = Base$Fetch<unknown, NitroFetchRequest>;
 
 declare module "h3" {
   interface H3Event {
@@ -14,7 +18,6 @@ declare module "h3" {
     fetch: H3EventFetch;
     /** @experimental Calls fetch with same context and request headers */
     $fetch: H3Event$Fetch;
-    /** @experimental See https://github.com/unjs/nitro/issues/1420 */
     waitUntil: (promise: Promise<unknown>) => void;
     /** @experimental */
     captureError: CaptureError;
@@ -25,7 +28,11 @@ declare module "h3" {
       /** @experimental */
       errors: { error?: Error; context: CapturedErrorContext }[];
     };
+
+    cache: {
+      options: CacheOptions;
+    };
   }
 }
 
-export {};
+export type {};

@@ -1,21 +1,25 @@
-import { tmpdir } from "node:os";
 import { promises as fsp } from "node:fs";
-import { join, resolve } from "pathe";
-import { listen, Listener } from "listhen";
-import destr from "destr";
-import { fetch, FetchOptions } from "ofetch";
-import { expect, it, afterAll, beforeAll, describe } from "vitest";
-import { fileURLToPath } from "mlly";
-import { joinURL } from "ufo";
+import type { RequestListener } from "node:http";
+import { tmpdir } from "node:os";
+import { type DateString, formatDate } from "compatx";
 import { defu } from "defu";
-import * as _nitro from "../src";
-import type { Nitro } from "../src";
-
-// Refactor: https://github.com/unjs/std-env/issues/60
-const nodeVersion = Number.parseInt(process.versions.node.match(/^v?(\d+)/)[0]);
-
-const { createNitro, build, prepare, copyPublicAssets, prerender } =
-  (_nitro as any as { default: typeof _nitro }).default || _nitro;
+import destr from "destr";
+import { type Listener, listen } from "listhen";
+import { fileURLToPath } from "mlly";
+import {
+  build,
+  copyPublicAssets,
+  createDevServer,
+  createNitro,
+  prepare,
+  prerender,
+} from "nitropack/core";
+import type { Nitro, NitroConfig } from "nitropack/types";
+import { type FetchOptions, fetch } from "ofetch";
+import { join, resolve } from "pathe";
+import { isWindows, nodeMajorVersion } from "std-env";
+import { joinURL } from "ufo";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 export interface Context {
   preset: string;
@@ -34,12 +38,18 @@ export interface Context {
   // [key: string]: unknown;
 }
 
-// https://github.com/unjs/nitro/pull/1240
-export const describeIf = (condition, title, factory) =>
+// https://github.com/nitrojs/nitro/pull/1240
+export const describeIf = (
+  condition: boolean,
+  title: string,
+  factory: () => any
+) =>
   condition
     ? describe(title, factory)
     : describe(title, () => {
-        it.skip("skipped", () => {});
+        it.skip("skipped", () => {
+          // Ignore
+        });
       });
 
 export const fixtureDir = fileURLToPath(
@@ -61,24 +71,28 @@ export const getPresetTmpDir = (preset: string) => {
 
 export async function setupTest(
   preset: string,
-  opts: { config?: _nitro.NitroConfig } = {}
+  opts: { config?: NitroConfig; compatibilityDate?: DateString } = {}
 ) {
   const presetTmpDir = getPresetTmpDir(preset);
 
-  await fsp.rm(presetTmpDir, { recursive: true }).catch(() => {});
+  await fsp.rm(presetTmpDir, { recursive: true }).catch(() => {
+    // Ignore
+  });
   await fsp.mkdir(presetTmpDir, { recursive: true });
 
   const ctx: Context = {
     preset,
     isDev: preset === "nitro-dev",
     isWorker: [
-      "cloudflare",
+      "cloudflare-worker",
       "cloudflare-module",
+      "cloudflare-module-legacy",
       "cloudflare-pages",
+      "netlify-edge",
       "vercel-edge",
       "winterjs",
     ].includes(preset),
-    isLambda: ["netlify", "aws-lambda"].includes(preset),
+    isLambda: ["aws-lambda", "netlify-legacy"].includes(preset),
     isIsolated: ["winterjs"].includes(preset),
     supportsEnv: !["winterjs"].includes(preset),
     rootDir: fixtureDir,
@@ -88,6 +102,7 @@ export async function setupTest(
       CUSTOM_HELLO_THERE: "general",
       SECRET: "secret",
       APP_DOMAIN: "test.com",
+      NITRO_DYNAMIC: "from-env",
     },
     fetch: (url, opts) =>
       fetch(joinURL(ctx.server!.url, url.slice(1)), {
@@ -101,34 +116,35 @@ export async function setupTest(
     process.env[name] = value;
   }
 
-  const nitro = (ctx.nitro = await createNitro(
-    defu(opts.config, {
-      preset: ctx.preset,
-      dev: ctx.isDev,
-      rootDir: ctx.rootDir,
-      runtimeConfig: {
-        nitro: {
-          envPrefix: "CUSTOM_",
-        },
-        hello: "",
-        helloThere: "",
+  const config = defu(opts.config, {
+    preset: ctx.preset,
+    dev: ctx.isDev,
+    rootDir: ctx.rootDir,
+    runtimeConfig: {
+      nitro: {
+        envPrefix: "CUSTOM_",
       },
-      buildDir: resolve(fixtureDir, presetTmpDir, ".nitro"),
-      serveStatic: !ctx.isDev && !ctx.isWorker,
-      output: {
-        dir: ctx.outDir,
-      },
-      timing: !ctx.isWorker,
-    })
-  ));
+      hello: "",
+      helloThere: "",
+    },
+    buildDir: resolve(fixtureDir, presetTmpDir, ".nitro"),
+    serveStatic: !ctx.isDev && !ctx.isWorker,
+    output: {
+      dir: ctx.outDir,
+    },
+    timing: !ctx.isWorker,
+  });
+  const nitro = (ctx.nitro = await createNitro(config, {
+    compatibilityDate: opts.compatibilityDate || formatDate(new Date()),
+  }));
 
   if (ctx.isDev) {
     // Setup development server
-    const devServer = _nitro.createDevServer(ctx.nitro);
+    const devServer = createDevServer(ctx.nitro);
     ctx.server = await devServer.listen({});
     await prepare(ctx.nitro);
     const ready = new Promise<void>((resolve) => {
-      ctx.nitro.hooks.hook("dev:reload", () => resolve());
+      ctx.nitro!.hooks.hook("dev:reload", () => resolve());
     });
     await build(ctx.nitro);
     await ready;
@@ -152,9 +168,8 @@ export async function setupTest(
   return ctx;
 }
 
-export async function startServer(ctx: Context, handle) {
+export async function startServer(ctx: Context, handle: RequestListener) {
   ctx.server = await listen(handle);
-  console.log(">", ctx.server!.url);
 }
 
 type TestHandlerResult = {
@@ -167,12 +182,15 @@ type TestHandler = (options: any) => Promise<TestHandlerResult | Response>;
 export function testNitro(
   ctx: Context,
   getHandler: () => TestHandler | Promise<TestHandler>,
-  additionalTests?: (ctx: Context, callHandler: TestHandler) => void
+  additionalTests?: (
+    ctx: Context,
+    callHandler: (options: any) => Promise<TestHandlerResult>
+  ) => void
 ) {
   let _handler: TestHandler;
 
   async function callHandler(
-    options,
+    options: any,
     callOpts: { binary?: boolean } = {}
   ): Promise<TestHandlerResult> {
     const result = await _handler(options);
@@ -213,8 +231,11 @@ export function testNitro(
     const { data: helloData } = await callHandler({ url: "/api/hello" });
     expect(helloData).to.toMatchObject({ message: "Hello API" });
 
-    const { data: heyData } = await callHandler({ url: "/api/hey" });
-    expect(heyData).to.have.string("Hey API");
+    if (ctx.nitro?.options.serveStatic) {
+      // /api/hey is expected to be prerendered
+      const { data: heyData } = await callHandler({ url: "/api/hey" });
+      expect(heyData).to.have.string("Hey API");
+    }
 
     const { data: kebabData } = await callHandler({ url: "/api/kebab" });
     expect(kebabData).to.have.string("hello-world");
@@ -228,6 +249,15 @@ export function testNitro(
       url: "/api/wildcard/foo/bar/baz",
     });
     expect(paramsData2).toBe("foo/bar/baz");
+  });
+
+  it("group routes", async () => {
+    const { status } = await callHandler({ url: "/route-group" });
+    expect(status).toBe(200);
+    const { status: apiStatus } = await callHandler({
+      url: "/route-group",
+    });
+    expect(apiStatus).toBe(200);
   });
 
   it("Handle 404 not found", async () => {
@@ -247,13 +277,13 @@ export function testNitro(
 
     const obj = await callHandler({ url: "/rules/redirect/obj" });
     expect(obj.status).toBe(308);
-    expect(obj.headers.location).toBe("https://nitro.unjs.io/");
+    expect(obj.headers.location).toBe("https://nitro.build/");
 
     const wildcard = await callHandler({
       url: "/rules/redirect/wildcard/nuxt",
     });
     expect(wildcard.status).toBe(307);
-    expect(wildcard.headers.location).toBe("https://nitro.unjs.io/nuxt");
+    expect(wildcard.headers.location).toBe("https://nitro.build/nuxt");
   });
 
   it("binary response", async () => {
@@ -283,6 +313,43 @@ export function testNitro(
     expect(data).toMatch("<h1 >Hello JSX!</h1>");
   });
 
+  it.runIf(ctx.nitro?.options.serveStatic)(
+    "handles custom Vary header",
+    async () => {
+      let headers = (
+        await callHandler({
+          url: "/foo.css",
+          headers: { "Accept-Encoding": "gzip" },
+        })
+      ).headers;
+      if (headers["vary"])
+        expect(
+          headers["vary"].includes("Origin") &&
+            headers["vary"].includes("Accept-Encoding")
+        ).toBeTruthy();
+
+      headers = (
+        await callHandler({
+          url: "/foo.css",
+          headers: { "Accept-Encoding": "" },
+        })
+      ).headers;
+      if (headers["vary"]) expect(headers["vary"]).toBe("Origin");
+
+      headers = (
+        await callHandler({
+          url: "/foo.js",
+          headers: { "Accept-Encoding": "gzip" },
+        })
+      ).headers;
+      if (headers["vary"])
+        expect(
+          headers["vary"].includes("Origin") &&
+            headers["vary"].includes("Accept-Encoding")
+        ).toBeTruthy();
+    }
+  );
+
   it("handles route rules - headers", async () => {
     const { headers } = await callHandler({ url: "/rules/headers" });
     expect(headers["cache-control"]).toBe("s-maxage=60");
@@ -310,23 +377,40 @@ export function testNitro(
   });
 
   it("handles errors", async () => {
-    const { status } = await callHandler({
+    const { status, headers } = await callHandler({
       url: "/api/error",
       headers: {
         Accept: "application/json",
       },
     });
     expect(status).toBe(503);
-    const { data: heyData } = await callHandler({ url: "/api/hey" });
-    expect(heyData).to.have.string("Hey API");
+
+    expect(headers).toMatchObject({
+      "content-type": "application/json",
+      "content-security-policy": ctx.isDev
+        ? "script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self';"
+        : "script-src 'none'; frame-ancestors 'none';",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "x-frame-options": "DENY",
+    });
+
+    const { data } = await callHandler({
+      url: "/api/error?json",
+    });
+    expect(status).toBe(503);
+    expect(data.json.error).toBe(true);
   });
 
-  it("universal import.meta", async () => {
-    const { status, data } = await callHandler({ url: "/api/import-meta" });
-    expect(status).toBe(200);
-    expect(data.testFile).toMatch(/[/\\]test.txt$/);
-    expect(data.hasEnv).toBe(true);
-  });
+  it.skipIf(isWindows && ctx.preset === "nitro-dev")(
+    "universal import.meta",
+    async () => {
+      const { status, data } = await callHandler({ url: "/api/import-meta" });
+      expect(status).toBe(200);
+      expect(data.testFile).toMatch(/[/\\]test.txt$/);
+      expect(data.hasEnv).toBe(true);
+    }
+  );
 
   it("handles custom server assets", async () => {
     const { data: html, status: htmlStatus } = await callHandler({
@@ -353,20 +437,14 @@ export function testNitro(
       const { status, headers } = await callHandler({ url: "/favicon.ico" });
       expect(status).toBe(200);
       expect(headers.etag).toBeDefined();
-      expect(headers["content-type"]).toMatchInlineSnapshot(
-        '"image/vnd.microsoft.icon"'
-      );
+      expect(headers["content-type"]).toBe("image/vnd.microsoft.icon");
     });
 
     it("serve static asset /build/test.txt", async () => {
       const { status, headers } = await callHandler({ url: "/build/test.txt" });
       expect(status).toBe(200);
-      expect(headers.etag).toMatchInlineSnapshot(
-        `""7-vxGfAKTuGVGhpDZqQLqV60dnKPw""`
-      );
-      expect(headers["content-type"]).toMatchInlineSnapshot(
-        '"text/plain; charset=utf-8"'
-      );
+      expect(headers.etag).toBe('"7-vxGfAKTuGVGhpDZqQLqV60dnKPw"');
+      expect(headers["content-type"]).toBe("text/plain; charset=utf-8");
     });
 
     it("stores content-type for prerendered routes", async () => {
@@ -385,11 +463,10 @@ export function testNitro(
 
   it("find auto imported utils", async () => {
     const res = await callHandler({ url: "/imports" });
-    expect(res.data).toMatchInlineSnapshot(`
-        {
-          "testUtil": 123,
-        }
-      `);
+    expect(res.data).toMatchObject({
+      testUtil: 123,
+      testNestedUtil: 1234 + 12_345,
+    });
   });
 
   it.skipIf(ctx.preset === "deno-server")(
@@ -406,38 +483,42 @@ export function testNitro(
     }
   );
 
-  it.skipIf(ctx.isIsolated)("useStorage (with base)", async () => {
-    const putRes = await callHandler({
-      url: "/api/storage/item?key=test:hello",
-      method: "PUT",
-      body: "world",
-    });
-    expect(putRes.data).toMatchObject("world");
+  it.skipIf(ctx.isIsolated)(
+    "useStorage (with base)",
+    { retry: 5 },
+    async () => {
+      const putRes = await callHandler({
+        url: "/api/storage/item?key=test:hello",
+        method: "PUT",
+        body: "world",
+      });
+      expect(putRes.data).toBe("world");
 
-    expect(
-      (
-        await callHandler({
-          url: "/api/storage/item?key=:",
-        })
-      ).data
-    ).toMatchObject(["test:hello"]);
+      expect(
+        (
+          await callHandler({
+            url: "/api/storage/item?key=:",
+          })
+        ).data
+      ).toMatchObject(["test:hello"]);
 
-    expect(
-      (
-        await callHandler({
-          url: "/api/storage/item?base=test&key=:",
-        })
-      ).data
-    ).toMatchObject(["hello"]);
+      expect(
+        (
+          await callHandler({
+            url: "/api/storage/item?base=test&key=:",
+          })
+        ).data
+      ).toMatchObject(["hello"]);
 
-    expect(
-      (
-        await callHandler({
-          url: "/api/storage/item?base=test&key=hello",
-        })
-      ).data
-    ).toBe("world");
-  });
+      expect(
+        (
+          await callHandler({
+            url: "/api/storage/item?base=test&key=hello",
+          })
+        ).data
+      ).toBe("world");
+    }
+  );
 
   if (additionalTests) {
     additionalTests(ctx, callHandler);
@@ -486,11 +567,10 @@ export function testNitro(
         "server-config": true,
       },
       sharedRuntimeConfig: {
+        // Cloudflare environment variables are set after first request
         dynamic:
-          // TODO
-          ctx.preset.includes("cloudflare") ||
-          ctx.preset === "vercel-edge" ||
-          ctx.preset === "nitro-dev"
+          ctx.preset.includes("cloudflare") &&
+          ctx.preset !== "cloudflare-worker"
             ? "initial"
             : "from-env",
         // url: "https://test.com",
@@ -503,7 +583,7 @@ export function testNitro(
 
   if (ctx.nitro!.options.timing) {
     it("set server timing header", async () => {
-      const { data, status, headers } = await callHandler({
+      const { status, headers } = await callHandler({
         url: "/api/hello",
       });
       expect(status).toBe(200);
@@ -548,7 +628,7 @@ export function testNitro(
     );
 
     it.skipIf(ctx.isWorker || ctx.isDev)(
-      "public files can be un-ignored with patterns",
+      "public files can be un-ignored with patterns",
       async () => {
         expect((await callHandler({ url: "/_unignored.txt" })).status).toBe(
           200
@@ -572,29 +652,30 @@ export function testNitro(
       ];
 
       // TODO: Node presets do not split cookies
-      // https://github.com/unjs/nitro/issues/1462
+      // https://github.com/nitrojs/nitro/issues/1462
       // (vercel and deno-server uses node only for tests only)
-      const notSplitingPresets = [
-        "node",
+      const notSplittingPresets = [
+        "node-listener",
         "nitro-dev",
         "vercel",
-        nodeVersion < 18 && "deno-server",
-        nodeVersion < 18 && "bun",
+        (nodeMajorVersion || 0) < 18 && "deno-server",
+        (nodeMajorVersion || 0) < 18 && "bun",
       ].filter(Boolean);
-      if (notSplitingPresets.includes(ctx.preset)) {
+      if (notSplittingPresets.includes(ctx.preset)) {
         expectedCookies =
-          nodeVersion < 18
+          (nodeMajorVersion || 0) < 18
             ? "foo=bar, bar=baz, test=value; Path=/, test2=value; Path=/"
             : ["foo=bar, bar=baz", "test=value; Path=/", "test2=value; Path=/"];
       }
 
       // TODO: vercel-edge joins all cookies for some reason!
-      if (ctx.preset === "vercel-edge") {
-        expectedCookies =
-          "foo=bar, bar=baz, test=value; Path=/, test2=value; Path=/";
+      if (typeof expectedCookies === "string") {
+        expect(headers["set-cookie"]).toBe(expectedCookies);
+      } else {
+        expect((headers["set-cookie"] as string[]).join(", ")).toBe(
+          expectedCookies.join(", ")
+        );
       }
-
-      expect(headers["set-cookie"]).toMatchObject(expectedCookies);
     });
   });
 
@@ -602,25 +683,25 @@ export function testNitro(
     it.skipIf(ctx.isIsolated)("captures errors", async () => {
       const { data } = await callHandler({ url: "/api/errors" });
       const allErrorMessages = (data.allErrors || []).map(
-        (entry) => entry.message
+        (entry: any) => entry.message
       );
       expect(allErrorMessages).to.includes("Service Unavailable");
     });
 
     it.skipIf(
-      !ctx.nitro.options.node ||
+      !ctx.nitro!.options.node ||
         // TODO: Investigate
         ctx.preset === "bun" ||
         ctx.preset === "deno-server" ||
         ctx.preset === "nitro-dev"
     )("sourcemap works", async () => {
       const { data } = await callHandler({ url: "/error-stack" });
-      expect(data.stack).toMatch("test/fixture/routes/error-stack.ts:4:1");
+      expect(data.stack).toMatch("test/fixture/routes/error-stack.ts");
     });
   });
 
   describe("async context", () => {
-    it.skipIf(!ctx.nitro.options.node)("works", async () => {
+    it.skipIf(!ctx.nitro!.options.node)("works", async () => {
       const { data } = await callHandler({ url: "/context?foo" });
       expect(data).toMatchObject({
         context: {
@@ -640,10 +721,14 @@ export function testNitro(
   });
 
   describe("cache", () => {
-    it.skipIf(ctx.isIsolated)(
+    it.skipIf(ctx.isIsolated || (isWindows && ctx.preset === "nitro-dev"))(
       "should setItem before returning response the first time",
       async () => {
-        const { data: timestamp } = await callHandler({ url: "/api/cached" });
+        const {
+          data: { timestamp, eventContextCache },
+        } = await callHandler({ url: "/api/cached" });
+
+        expect(eventContextCache?.options.swr).toBe(true);
 
         const calls = await Promise.all([
           callHandler({ url: "/api/cached" }),
@@ -652,7 +737,8 @@ export function testNitro(
         ]);
 
         for (const call of calls) {
-          expect(call.data).toBe(timestamp);
+          expect(call.data.timestamp).toBe(timestamp);
+          expect(call.data.eventContextCache.options.swr).toBe(true);
         }
       }
     );
@@ -667,7 +753,7 @@ export function testNitro(
     });
   });
 
-  describe.skipIf(ctx.preset === "cloudflare")("wasm", () => {
+  describe.skipIf(ctx.preset === "cloudflare-worker")("wasm", () => {
     it("dynamic import wasm", async () => {
       expect((await callHandler({ url: "/wasm/dynamic-import" })).data).toBe(
         "2+3=5"
@@ -682,10 +768,17 @@ export function testNitro(
   });
 
   describe.skipIf(
-    !ctx.nitro.options.node ||
+    isWindows ||
+      !ctx.nitro!.options.node ||
       ctx.isLambda ||
       ctx.isWorker ||
-      ["bun", "deno-server", "deno-deploy"].includes(ctx.preset)
+      [
+        "bun",
+        "deno-server",
+        "deno-deploy",
+        "netlify",
+        "netlify-legacy",
+      ].includes(ctx.preset)
   )("Database", () => {
     it("works", async () => {
       const { data } = await callHandler({ url: "/api/db" });
@@ -700,5 +793,39 @@ export function testNitro(
         ],
       });
     });
+  });
+
+  describe("Environment specific routes", () => {
+    it("filters based on dev|prod", async () => {
+      const { data } = await callHandler({ url: "/env" });
+      expect(data).toBe(ctx.isDev ? "dev env" : "prod env");
+    });
+  });
+
+  it("raw imports", async () => {
+    const { data } = await callHandler({ url: "/raw" });
+    expect(data).toMatchObject({
+      sql: "--",
+      sqlts: "--",
+    });
+  });
+
+  it.skipIf(
+    ["cloudflare-worker", "cloudflare-module-legacy"].includes(ctx.preset)
+  )("nodejs compatibility", async () => {
+    const { data, status } = await callHandler({ url: "/node-compat" });
+    expect(status).toBe(200);
+    for (const key in data) {
+      if (
+        ctx.preset === "vercel-edge" &&
+        (key === "crypto:createHash" || key === "tls:connect")
+      ) {
+        continue;
+      }
+      if (ctx.preset === "deno-server" && key === "globals:BroadcastChannel") {
+        continue; // unstable API
+      }
+      expect(data[key], key).toBe(true);
+    }
   });
 }

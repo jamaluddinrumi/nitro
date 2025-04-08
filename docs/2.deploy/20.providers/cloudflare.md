@@ -9,7 +9,7 @@
 :read-more{title="Cloudflare Pages" to="https://pages.cloudflare.com/"}
 
 ::note
-This is the recommended preset for Cloudflare deployments, please consider using the alternative ones only if you have special requirements or needs.
+This is the recommended preset for Cloudflare deployments, please consider using the alternative ones if you need special features.
 ::
 
 ::note
@@ -26,21 +26,21 @@ If you use the [Cloudflare Pages GitHub/GitLab integration](https://developers.c
 
 If instead you want preview your application locally and/or manually deploy it, when building the application you will need to let Nitro know that the target environment is the Cloudflare Pages one, you can do that in two ways:
 
-1. By defining either the `NITRO_PRESET` or the `SERVER_PRESET` environment variable set to `cloudflare-pages` when running the build process, like so:
+- By defining either the `NITRO_PRESET` or the `SERVER_PRESET` environment variable set to `cloudflare_pages` when running the build process, like so:
 
-  ```bash
-  NITRO_PRESET=cloudflare-pages npm run build
-  ```
+    ```bash
+    NITRO_PRESET=cloudflare_pages npm run build
+    ```
 
-1. Or by updating your Nitro [preset configuration](/config#preset):
+- Or by updating your Nitro [preset configuration](/config#preset):
 
-  ```json5
-  "preset": "cloudflare-pages",
-  ```
+    ```json5
+    "preset": "cloudflare_pages",
+    ```
 
-and then running the standard build command:
+    and then running the standard build command:
 
-:pm-run{script="build"}
+    :pm-run{script="build"}
 
 ### Wrangler
 
@@ -73,29 +73,47 @@ Then you can deploy the application with:
 **Note:** This preset uses the [module worker syntax](https://developers.cloudflare.com/workers/learning/migrating-to-module-workers/) for deployment.
 ::
 
-::warning
-**Note:** Using this preset is not recommended.
+When using Workers you will need a `wrangler.toml` file, in your root directory. To using Workers with [Static Assets](https://developers.cloudflare.com/workers/static-assets/) (BETA with [limitations](https://developers.cloudflare.com/workers/static-assets/#limitations)), you also need a compatibility date set to `2024-09-19` or later, in your `wrangler.toml` file and nitro configuration file.
+
+The following shows a typical `wrangler.toml` file and a `nitro.config.ts` file for a Nitro application:
+
+::code-group
+
+```ts [nitro.config.ts]
+export default defineNitroConfig({
+    compatibilityDate: "2024-09-19",
+})
+```
+
+```ts [nuxt.config.ts]
+export default defineNuxtConfig({
+    compatibilityDate: "2024-09-19",
+})
+```
+
 ::
 
-When using Workers you will need a `wrangler.toml` file, in your root directory.
-
-The following shows a typical `wrangler.toml` file for a Nitro application:
-
-```ini
-name = "playground"
+```ini [wrangler.toml]
+name = "nitro-app"
+compatibility_date = "2024-09-19"
 main = "./.output/server/index.mjs"
-workers_dev = true
-compatibility_date = "2023-12-01"
-# account_id = "<(optional) your Cloudflare account id, retrievable from the Cloudflare dashboard>"
-# route = "<(optional) mainly useful when you want to setup custom domains>"
-
-rules = [
-  { type = "ESModule", globs = ["**/*.js", "**/*.mjs"]},
-]
-
-[site]
-bucket = ".output/public"
+assets = { directory = "./.output/public/", binding = "ASSETS" }
 ```
+
+
+
+## Runtime hooks
+
+You can use [runtime hooks](/guide/plugins#nitro-runtime-hooks) below in order to extend [worker handlers](https://developers.cloudflare.com/workers/runtime-apis/handlers/).
+
+:read-more{to="/guide/plugins#nitro-runtime-hooks"}
+
+- [`cloudflare:scheduled`](https://developers.cloudflare.com/workers/runtime-apis/handlers/scheduled/)
+- [`cloudflare:email`](https://developers.cloudflare.com/email-routing/email-workers/runtime-api/)
+- [`cloudflare:queue`](https://developers.cloudflare.com/queues/configuration/javascript-apis/#consumer)
+- [`cloudflare:tail`](https://developers.cloudflare.com/workers/runtime-apis/handlers/tail/)
+- `cloudflare:trace`
+
 
 ### Preview your app locally
 
@@ -120,7 +138,7 @@ npm i wrangler
 wrangler login
 ```
 
-Generate your app using the `cloudflare` preset:
+Generate your app using the `cloudflare_module` preset:
 
 ```bash
 NITRO_PRESET=cloudflare_module npm run build
@@ -159,7 +177,7 @@ The way this preset works is identical to that of the `cloudflare_module` one pr
 Regardless on whether you're using Cloudflare Pages or Cloudflare workers, you can use the [Wrangler GitHub actions](https://github.com/marketplace/actions/deploy-to-cloudflare-workers-with-wrangler) to deploy your application.
 
 ::note
-**Note:** Remember to [instruct Nitro to use the correct preset](/deploy/#changing-the-deployment-preset) (note that this is necessary for all presets including the `cloudflare_pages` one).
+**Note:** Remember to [instruct Nitro to use the correct preset](/deploy#changing-the-deployment-preset) (note that this is necessary for all presets including the `cloudflare_pages` one).
 ::
 
 ## Environment Variables
@@ -215,10 +233,6 @@ For production, use the cloudflare dashboard or the [`wrangler secret`](https://
 
 You can specify a custom `wrangler.toml` file and define vars inside.
 
-::note
-**Note:** `wrangler.toml` isn't supported by cloudflare pages.
-::
-
 ::warning
 Note that this isn't recommend for sensitive data.
 ::
@@ -255,7 +269,7 @@ For more details on Bindings and how to use them please refer to the Cloudflare 
 In runtime, you can access bindings from the request event, by accessing its `context.cloudflare.env` field, this is for example how you can access a D1 bindings:
 
 ```ts
-defineEventHandler((event) => {
+defineEventHandler(async (event) => {
   const { cloudflare } = event.context
   const stmt = await cloudflare.env.MY_D1.prepare('SELECT id FROM table')
   const { results } = await stmt.all()
@@ -264,7 +278,7 @@ defineEventHandler((event) => {
 
 ### Access to the bindings in local env
 
-In order to access bindings during local dev mode, regardless of the chosen preset, it is recommended to use a `wrangler.toml` file (as well as a `.dev.vars` one) in combination with the [`nitro-cloudflare-dev` module](https://github.com/pi0/nitro-cloudflare-dev) as illustrated below.
+In order to access bindings during local dev mode, regardless of the chosen preset, it is recommended to use a `wrangler.toml` file (as well as a `.dev.vars` one) in combination with the [`nitro-cloudflare-dev` module](https://github.com/nitrojs/nitro-cloudflare-dev) as illustrated below.
 
 > [!NOTE]
 > The `nitro-cloudflare-dev` module is experimental. The Nitro team is looking into a more native integration  which could in the near future make the module unneeded.
@@ -309,6 +323,6 @@ export default defineNuxtConfig({
 
 From this moment, when running
 
-::pm-run{script="dev"}
+:pm-run{script="dev"}
 
 you will be able to access the `MY_VARIABLE` and `MY_KV` from the request event just as illustrated above.

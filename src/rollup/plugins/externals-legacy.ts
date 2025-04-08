@@ -1,14 +1,14 @@
 import { existsSync, promises as fsp } from "node:fs";
-import { resolve, dirname, normalize, join, isAbsolute } from "pathe";
+import { type NodeFileTraceOptions, nodeFileTrace } from "@vercel/nft";
 import { consola } from "consola";
-import { nodeFileTrace, NodeFileTraceOptions } from "@vercel/nft";
+import { isValidNodeImport, normalizeid, resolvePath } from "mlly";
+import { isDirectory } from "nitropack/kit";
+import { dirname, isAbsolute, join, normalize, resolve } from "pathe";
 import type { Plugin } from "rollup";
-import { resolvePath, isValidNodeImport, normalizeid } from "mlly";
 import semver from "semver";
-import { isDirectory, retry } from "../../utils";
 import { normalizeMatcher } from "./externals";
 
-export interface NodeExternalsOptions {
+interface NodeExternalsOptions {
   inline?: Array<
     | string
     | RegExp
@@ -52,7 +52,7 @@ export function externals(opts: NodeExternalsOptions): Plugin {
 
   return {
     name: "node-externals",
-    async resolveId(originalId, importer, options) {
+    async resolveId(originalId, importer, resolveOpts) {
       // Skip internals
       if (
         !originalId ||
@@ -86,7 +86,11 @@ export function externals(opts: NodeExternalsOptions): Plugin {
       }
 
       // Resolve id using rollup resolver
-      const resolved = (await this.resolve(originalId, importer, options)) || {
+      const resolved = (await this.resolve(
+        originalId,
+        importer,
+        resolveOpts
+      )) || {
         id,
       };
 
@@ -182,7 +186,7 @@ export function externals(opts: NodeExternalsOptions): Plugin {
         opts.traceOptions
       )
         .then((r) =>
-          [...r.fileList].map((f) => resolve(opts.traceOptions.base, f))
+          [...r.fileList].map((f) => resolve(opts.traceOptions!.base!, f))
         )
         .then((r) => r.filter((file) => file.includes("node_modules")));
 
@@ -206,7 +210,7 @@ export function externals(opts: NodeExternalsOptions): Plugin {
 
       // Keep track of npm packages
       const tracedPackages = new Map(); // name => pkgDir
-      const ignoreDirs = [];
+      const ignoreDirs = [] as string[];
       const ignoreWarns = new Set();
       for (const file of tracedFiles) {
         const { baseDir, pkgName } = parseNodeModulePath(file);
@@ -275,9 +279,9 @@ export function externals(opts: NodeExternalsOptions): Plugin {
         if (!(await isFile(file))) {
           return;
         }
-        const src = resolve(opts.traceOptions.base, file);
+        const src = resolve(opts.traceOptions!.base!, file);
         const { pkgName, subpath } = parseNodeModulePath(file);
-        const dst = resolve(opts.outDir, `node_modules/${pkgName + subpath}`);
+        const dst = resolve(opts.outDir!, `node_modules/${pkgName! + subpath}`);
         await fsp.mkdir(dirname(dst), { recursive: true });
         try {
           await fsp.copyFile(src, dst);
@@ -293,7 +297,7 @@ export function externals(opts: NodeExternalsOptions): Plugin {
 
       // Write an informative package.json
       await fsp.writeFile(
-        resolve(opts.outDir, "package.json"),
+        resolve(opts.outDir!, "package.json"),
         JSON.stringify(
           {
             name: "nitro-output",
@@ -332,10 +336,24 @@ async function isFile(file: string) {
   try {
     const stat = await fsp.stat(file);
     return stat.isFile();
-  } catch (err) {
-    if (err.code === "ENOENT") {
+  } catch (error: any) {
+    if (error.code === "ENOENT") {
       return false;
     }
-    throw err;
+    throw error;
   }
+}
+
+async function retry(fn: () => Promise<void>, retries: number) {
+  let retry = 0;
+  let lastError: any;
+  while (retry++ < retries) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+  }
+  throw lastError;
 }

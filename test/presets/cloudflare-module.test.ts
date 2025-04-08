@@ -1,8 +1,7 @@
-import { promises as fsp } from "node:fs";
-import { join, resolve } from "pathe";
 import { Miniflare } from "miniflare";
-import { describe, it, expect } from "vitest";
+import { resolve } from "pathe";
 import { Response as _Response } from "undici";
+import { describe } from "vitest";
 
 import { setupTest, testNitro } from "../tests";
 
@@ -14,8 +13,20 @@ describe("nitro:preset:cloudflare-module", async () => {
       modules: true,
       scriptPath: resolve(ctx.outDir, "server/index.mjs"),
       modulesRules: [{ type: "CompiledWasm", include: ["**/*.wasm"] }],
-      sitePath: resolve(ctx.outDir, "public"),
-      compatibilityFlags: ["streams_enable_constructors"],
+      assets: {
+        directory: resolve(ctx.outDir, "public"),
+        routerConfig: { has_user_worker: true },
+        assetConfig: {
+          // https://developers.cloudflare.com/workers/static-assets/routing/#routing-configuration
+          html_handling: "auto-trailing-slash" /* default */,
+          not_found_handling: "none" /* default */,
+        },
+      },
+      compatibilityFlags: [
+        "streams_enable_constructors",
+        "nodejs_compat",
+        "no_nodejs_compat_v2",
+      ],
       bindings: { ...ctx.env },
     });
 

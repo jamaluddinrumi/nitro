@@ -1,8 +1,8 @@
 import { defineCommand } from "citty";
-import { resolve } from "pathe";
-import destr from "destr";
 import { consola } from "consola";
-import { runTask } from "../../../task";
+import destr from "destr";
+import { createNitro, loadOptions, runTask } from "nitropack/core";
+import { resolve } from "pathe";
 
 export default defineCommand({
   meta: {
@@ -27,6 +27,8 @@ export default defineCommand({
   },
   async run({ args }) {
     const cwd = resolve((args.dir || args.cwd || ".") as string);
+    const options = await loadOptions({ rootDir: cwd }).catch(() => undefined);
+
     consola.info(`Running task \`${args.name}\`...`);
     let payload: any = destr(args.payload || "{}");
     if (typeof payload !== "object") {
@@ -44,12 +46,12 @@ export default defineCommand({
         },
         {
           cwd,
-          buildDir: ".nitro",
+          buildDir: options?.buildDir || ".nitro",
         }
       );
       consola.success("Result:", result);
-    } catch (err) {
-      consola.error(`Failed to run task \`${args.name}\`: ${err.message}`);
+    } catch (error) {
+      consola.error(`Failed to run task \`${args.name}\`: ${error}`);
       process.exit(1); // eslint-disable-line unicorn/no-process-exit
     }
   },

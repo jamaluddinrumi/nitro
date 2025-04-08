@@ -4,7 +4,7 @@
 
 **Preset:** `github_pages`
 
-:read-more{title="Github Pages" to="https://pages.github.com/"}
+:read-more{title="GitHub Pages" to="https://pages.github.com/"}
 
 ## Setup
 
@@ -34,8 +34,7 @@ jobs:
         with:
           node-version: "18"
 
-      # Pick your own package manager and build script
-      - run: npm install
+      - run: npx nypm install
       - run: npm run build
         env:
           NITRO_PRESET: github_pages
@@ -57,7 +56,7 @@ jobs:
 
     # Deploy to the github_pages environment
     environment:
-      name: github_pages
+      name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
 
     # Specify runner + deployment step

@@ -71,9 +71,17 @@ staticwebapp.config.json
 .eslintcache
 playground/firebase.json
 .zeabur
+.apphosting
 
 test/fixture/functions
 .data
 
 .pnpm-store
 .wrangler
+
+# mirror pkg
+.mirror
+
+# Generated types
+*.d.ts
+!runtime-meta.d.ts

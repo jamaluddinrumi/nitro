@@ -1,13 +1,15 @@
-// import ansiHTML from 'ansi-html'
-import { setResponseHeader, setResponseStatus, send } from "h3";
-import type { NitroErrorHandler } from "../types";
-import { normalizeError, isJsonRequest } from "./utils";
+// Backward compatibility for imports from "#internal/nitro/*" or "nitropack/runtime/*"
 
-export function defineNitroErrorHandler(
-  handler: NitroErrorHandler
-): NitroErrorHandler {
-  return handler;
-}
+import {
+  send,
+  setResponseHeader,
+  setResponseHeaders,
+  setResponseStatus,
+} from "h3";
+import { defineNitroErrorHandler } from "./internal/error/utils";
+import { isJsonRequest, normalizeError } from "./utils";
+
+export { defineNitroErrorHandler } from "./internal/error/utils";
 
 const isDev = process.env.NODE_ENV === "development";
 
@@ -19,9 +21,15 @@ interface ParsedError {
   stack?: string[];
 }
 
+/**
+ * @deprecated This export is only provided for backward compatibility and will be removed in v3.
+ */
 export default defineNitroErrorHandler(
   function defaultNitroErrorHandler(error, event) {
-    const { stack, statusCode, statusMessage, message } = normalizeError(error);
+    const { stack, statusCode, statusMessage, message } = normalizeError(
+      error,
+      isDev
+    );
 
     const showDetails = isDev && statusCode !== 404;
 
@@ -36,7 +44,6 @@ export default defineNitroErrorHandler(
     // Console output
     if (error.unhandled || error.fatal) {
       const tags = [
-        "[nitro]",
         "[request error]",
         error.unhandled && "[unhandled]",
         error.fatal && "[fatal]",
@@ -49,15 +56,30 @@ export default defineNitroErrorHandler(
       );
     }
 
+    if (statusCode === 404) {
+      setResponseHeader(event, "Cache-Control", "no-cache");
+    }
+
+    // Security headers
+    setResponseHeaders(event, {
+      // Disable the execution of any js
+      "Content-Security-Policy": "script-src 'none'; frame-ancestors 'none';",
+      // Prevent browser from guessing the MIME types of resources.
+      "X-Content-Type-Options": "nosniff",
+      // Prevent error page from being embedded in an iframe
+      "X-Frame-Options": "DENY",
+      // Prevent browsers from sending the Referer header
+      "Referrer-Policy": "no-referrer",
+    });
+
     setResponseStatus(event, statusCode, statusMessage);
 
     if (isJsonRequest(event)) {
       setResponseHeader(event, "Content-Type", "application/json");
       return send(event, JSON.stringify(errorObject));
-    } else {
-      setResponseHeader(event, "Content-Type", "text/html");
-      return send(event, renderHTMLError(errorObject));
     }
+    setResponseHeader(event, "Content-Type", "text/html");
+    return send(event, renderHTMLError(errorObject));
   }
 );
 

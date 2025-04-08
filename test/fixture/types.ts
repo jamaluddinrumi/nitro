@@ -1,9 +1,13 @@
 import { expectTypeOf } from "expect-type";
+import {
+  type EventHandler,
+  type EventHandlerRequest,
+  defineEventHandler,
+} from "h3";
+import { defineNitroConfig } from "nitropack/config";
+import type { $Fetch } from "nitropack/types";
+import type { Serialize, Simplify } from "nitropack/types";
 import { describe, it } from "vitest";
-import { EventHandler, EventHandlerRequest, defineEventHandler } from "h3";
-import type { $Fetch } from "../..";
-import { defineNitroConfig } from "../../src/config";
-import type { Serialize, Simplify } from "../../src/types";
 
 interface TestResponse {
   message: string;
@@ -12,7 +16,6 @@ interface TestResponse {
 const $fetch = {} as $Fetch;
 
 describe("API routes", () => {
-  // eslint-disable-next-line @typescript-eslint/no-inferrable-types
   const dynamicString: string = "";
 
   it("generates types for middleware, unknown and manual typed routes", () => {
@@ -180,6 +183,13 @@ describe("API routes", () => {
   });
 
   it("generates the correct type depending on the method used", () => {
+    expectTypeOf($fetch("/api/methods")).toEqualTypeOf<Promise<"Index get">>();
+    expectTypeOf($fetch("/api/methods", {})).toEqualTypeOf<
+      Promise<"Index get">
+    >();
+    expectTypeOf($fetch("/api/methods", { query: {} })).toEqualTypeOf<
+      Promise<"Index get">
+    >();
     expectTypeOf($fetch("/api/methods", { method: "get" })).toEqualTypeOf<
       Promise<"Index get">
     >();
@@ -220,7 +230,6 @@ describe("API routes", () => {
     expectTypeOf($fetch("/api/serialized/null")).toEqualTypeOf<Promise<any>>();
 
     expectTypeOf($fetch("/api/serialized/function")).toEqualTypeOf<
-      // eslint-disable-next-line @typescript-eslint/ban-types
       Promise<{}>
     >();
 
@@ -245,6 +254,7 @@ describe("API routes", () => {
 describe("defineNitroConfig", () => {
   it("should not accept functions to routeRules.cache", () => {
     defineNitroConfig({
+      compatibilityDate: "2025-03-01",
       routeRules: {
         "/**": {
           cache: {
@@ -286,16 +296,17 @@ describe("defineCachedEventHandler", () => {
       Promise<{ message: string }>
     >(fixture);
     expectTypeOf(b).toEqualTypeOf<
-      // eslint-disable-next-line @typescript-eslint/ban-types
       EventHandler<{}, Promise<{ message: string }>>
     >();
   });
   it("is backwards compatible with old generic signature", () => {
-    const a = defineCachedEventHandler<
-      Promise<{
-        message: string;
-      }>
-    >(fixture);
+    // prettier-ignore
+    const a =
+      defineCachedEventHandler<
+        Promise<{
+          message: string;
+        }>
+      >(fixture);
     const b = defineEventHandler(fixture);
     expectTypeOf(a).toEqualTypeOf(b);
     expectTypeOf(b).toEqualTypeOf<

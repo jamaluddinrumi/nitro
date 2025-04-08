@@ -1,4 +1,5 @@
-import type { NitroOptions } from "./nitro";
+import type { NitroConfig, NitroOptions } from "./config";
+import type { NitroModule } from "./module";
 
 export interface NitroStaticBuildFlags {
   _asyncContext?: boolean;
@@ -7,6 +8,7 @@ export interface NitroStaticBuildFlags {
   dev?: boolean;
   client?: boolean;
   nitro?: boolean;
+  baseURL?: string;
   prerender?: boolean;
   preset?: NitroOptions["preset"];
   server?: boolean;
@@ -24,4 +26,9 @@ declare global {
   interface ImportMeta extends NitroStaticBuildFlags {}
 }
 
-export {};
+declare global {
+  const defineNitroConfig: (config: NitroConfig) => NitroConfig;
+  const defineNitroModule: (definition: NitroModule) => NitroModule;
+}
+
+export type {};
